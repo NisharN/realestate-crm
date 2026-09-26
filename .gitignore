@@ -1,0 +1,21 @@
+# python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.db
+*.db-journal
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# node
+node_modules/
+.next/
+out/
+tsconfig.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example

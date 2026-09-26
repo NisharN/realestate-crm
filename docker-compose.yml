@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+      POSTGRES_DB: crm
+    volumes:
+      - crm_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      CRM_ENVIRONMENT: production
+      CRM_DATABASE_URL: postgresql+asyncpg://crm:crm@db:5432/crm
+      CRM_JWT_SECRET: ${CRM_JWT_SECRET:?set CRM_JWT_SECRET in .env}
+      CRM_CORS_ORIGINS: '["http://localhost:3100"]'
+    ports:
+      - "8100:8100"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_CRM_API: http://localhost:8100
+    ports:
+      - "3100:3100"
+    depends_on:
+      - api
+
+volumes:
+  crm_pg:

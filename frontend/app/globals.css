@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --canvas: 40 20% 97%;
+  --surface: 0 0% 100%;
+  --ink: 24 12% 12%;
+  --muted: 25 6% 44%;
+  --line: 36 10% 88%;
+  --brand: 16 55% 42%;
+  --brand-soft: 20 70% 94%;
+  --success: 152 45% 36%;
+  --success-soft: 150 40% 93%;
+  --warning: 32 80% 40%;
+  --warning-soft: 38 80% 92%;
+  --danger: 4 66% 50%;
+  --danger-soft: 6 70% 96%;
+}
+
+* { border-color: hsl(var(--line)); }
+
+html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+body {
+  background: hsl(var(--canvas));
+  color: hsl(var(--ink));
+  font-feature-settings: "cv11", "ss01", "tnum";
+}
+
+@layer components {
+  .card { @apply rounded-2xl border bg-surface shadow-card; }
+  .input { @apply h-10 w-full rounded-xl border bg-surface px-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20 disabled:opacity-60; }
+  .btn { @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn bg-ink text-white hover:bg-ink/90; }
+  .btn-ghost { @apply btn border bg-surface hover:bg-canvas; }
+  .btn-sm { @apply h-8 px-3 text-xs; }
+  .label { @apply mb-1 block text-xs font-medium text-muted; }
+  .chip { @apply inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium; }
+  .kicker { @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-muted; }
+}
