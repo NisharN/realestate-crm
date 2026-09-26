@@ -268,7 +268,7 @@ function WebhooksCard() {
   const [creating, setCreating] = useState(false);
   const [secret, setSecret] = useState<{ id: string; value: string } | null>(null);
   const [openDeliveries, setOpenDeliveries] = useState<string | null>(null);
-  const [f, setF] = useState({ name: "AI agent platform", url: "", events: ["*"] });
+  const [f, setF] = useState({ name: "AI agent platform", url: "", events: ["*"], secret: "" });
   const [error, setError] = useState<unknown>(null);
   const [testResult, setTestResult] = useState<Delivery | null>(null);
 
@@ -284,7 +284,10 @@ function WebhooksCard() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void wrap(async () => {
-      const res = await api<{ webhook: Webhook & { secret: string } }>("/api/settings/webhooks", { method: "POST", json: f });
+      const res = await api<{ webhook: Webhook & { secret: string } }>("/api/settings/webhooks", {
+        method: "POST",
+        json: { name: f.name, url: f.url, events: f.events, ...(f.secret.trim() ? { secret: f.secret.trim() } : {}) },
+      });
       setSecret({ id: res.webhook.id, value: res.webhook.secret });
       setCreating(false);
       await mutate();
@@ -369,6 +372,9 @@ function WebhooksCard() {
             </Field>
             <Field label="HTTPS URL">
               <input className="input" type="url" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="https://agent.example.com/webhooks/crm" required />
+            </Field>
+            <Field label="Signing secret (optional)" hint="Paste the secret shown by the receiver (e.g. the AI agent's CRM connection). Leave blank to generate one.">
+              <input className="input font-mono" value={f.secret} onChange={(e) => setF({ ...f, secret: e.target.value })} minLength={16} autoComplete="off" />
             </Field>
             <fieldset>
               <legend className="label">Events</legend>

@@ -211,6 +211,10 @@ async def test_webhook_signed_delivery_and_secret_handling(client, tenant, lead_
     assert (await client.get(f"/api/settings/webhooks/{wid}/secret", headers=tenant.h)).json()["secret"] == secret
     assert (await client.post("/api/settings/webhooks", json={"name": "bad", "url": "ftp://x", "events": ["*"]}, headers=tenant.h)).status_code == 422
     assert (await client.post("/api/settings/webhooks", json={"name": "bad", "url": "https://x.example", "events": ["nope"]}, headers=tenant.h)).status_code == 422
+    # receiver-supplied secret (the agent platform generates one per inbound connection)
+    supplied = (await client.post("/api/settings/webhooks", json={"name": "agent2", "url": "https://x.example/hook", "events": ["*"], "secret": "receiver-secret-0123456789"}, headers=tenant.h)).json()["webhook"]
+    assert supplied["secret"] == "receiver-secret-0123456789"
+    assert (await client.post("/api/settings/webhooks", json={"name": "short", "url": "https://x.example/h", "secret": "tooshort"}, headers=tenant.h)).status_code == 422
 
     lead = (await client.post("/api/leads", json=lead_payload, headers=tenant.h)).json()["lead"]
     mock = httpx.AsyncClient(transport=httpx.MockTransport(handler))

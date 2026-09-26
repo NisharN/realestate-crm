@@ -112,7 +112,7 @@ async def create_webhook(body: WebhookIn, principal: Principal = Depends(manager
         url = validate_webhook_url(body.url)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
-    row = Webhook(agency_id=principal.agency_id, name=body.name, url=url, secret=generate_webhook_secret(), events=body.events, active=body.active)
+    row = Webhook(agency_id=principal.agency_id, name=body.name, url=url, secret=body.secret or generate_webhook_secret(), events=body.events, active=body.active)
     session.add(row)
     await session.commit()
     return {"webhook": serializers.webhook(row, reveal_secret=True)}

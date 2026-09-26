@@ -97,11 +97,12 @@ export function Empty({ title, hint }: { title: string; hint?: string }) {
   );
 }
 
-export function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+export function Field({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
   return (
     <label className={clsx("block", className)}>
       <span className="label">{label}</span>
       {children}
+      {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
   );
 }

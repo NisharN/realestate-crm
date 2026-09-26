@@ -308,6 +308,7 @@ class WebhookIn(Strict):
     url: str = Field(min_length=8, max_length=500)
     events: list[str] = ["*"]
     active: bool = True
+    secret: str | None = Field(default=None, min_length=16, max_length=200, description="Receiver-supplied signing secret; generated when omitted.")
 
 
 class WebhookPatch(Strict):
