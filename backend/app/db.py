@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 
@@ -36,8 +37,14 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def engine():
     global _engine, _sessionmaker
     if _engine is None:
-        url = get_settings().database_url
-        kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {"pool_pre_ping": True}
+        cfg = get_settings()
+        url = cfg.database_url
+        if url.startswith("sqlite"):
+            kwargs = {"connect_args": {"check_same_thread": False}}
+        elif cfg.environment == "test":
+            kwargs = {"poolclass": NullPool}  # asyncpg connections are bound to the event loop that opened them
+        else:
+            kwargs = {"pool_pre_ping": True}
         _engine = create_async_engine(url, **kwargs)
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
@@ -54,13 +61,15 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def init_db() -> None:
+async def init_db(*, drop_first: bool = False) -> None:
     """Dev/test convenience: create tables directly. Production runs ``alembic upgrade head`` instead."""
     from app import models  # noqa: F401  (register tables)
 
     if get_settings().is_production:
         return
     async with engine().begin() as conn:
+        if drop_first:
+            await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
 

@@ -271,3 +271,11 @@ async def test_owner_cannot_be_demoted_when_last(client, tenant):
     assert (await client.patch(f"/api/settings/team/{tenant.user_id}", json={"role": "agent"}, headers=tenant.h)).status_code == 409
     second = await register(client)
     assert (await client.patch(f"/api/settings/team/{second.user_id}", json={"role": "agent"}, headers=tenant.h)).status_code == 404
+
+
+def test_api_key_prefix_fits_column():
+    from app.models import ApiKey
+    from app.security import generate_api_key
+
+    _, prefix, _ = generate_api_key()
+    assert len(prefix) <= ApiKey.__table__.c.prefix.type.length

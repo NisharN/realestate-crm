@@ -7,10 +7,11 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-os.environ["CRM_DATABASE_URL"] = "sqlite+aiosqlite:///./test_crm.db"
+os.environ["CRM_DATABASE_URL"] = os.environ.get("CRM_TEST_DATABASE_URL", "sqlite+aiosqlite:///./test_crm.db")
 os.environ["CRM_ALLOW_PRIVATE_WEBHOOK_HOSTS"] = "1"
 os.environ["CRM_JWT_SECRET"] = "test-secret-not-for-prod-0123456789abcdef"
 os.environ["CRM_WEBHOOK_INLINE_DELIVERY"] = "0"
+os.environ["CRM_ENVIRONMENT"] = "test"
 
 from app.config import get_settings  # noqa: E402
 from app.db import init_db, reset_engine  # noqa: E402
@@ -23,7 +24,7 @@ get_settings.cache_clear()
 async def _db():
     if os.path.exists("test_crm.db"):
         os.remove("test_crm.db")
-    await init_db()
+    await init_db(drop_first=True)
     yield
     await reset_engine()
 

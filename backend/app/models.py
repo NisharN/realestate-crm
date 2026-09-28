@@ -64,7 +64,7 @@ class ApiKey(Stamped, Base):
     __tablename__ = "api_keys"
     agency_id: Mapped[str] = mapped_column(ForeignKey("agencies.id", ondelete="CASCADE"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
-    prefix: Mapped[str] = mapped_column(String(12), index=True, nullable=False)
+    prefix: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     scopes: Mapped[list[str]] = mapped_column(JSON, default=list)  # leads:read leads:write listings:read viewings:write ...
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
