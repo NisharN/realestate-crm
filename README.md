@@ -119,3 +119,10 @@ All settings are `CRM_`-prefixed env vars (see `backend/app/config.py`): `DATABA
 - **Web** — Vercel project `realestate-crm` (root `frontend/`, `NEXT_PUBLIC_CRM_API` points at the API):
   https://realestate-crm-coral.vercel.app (auto-deploys from `main`).
 - Add every web origin to `CRM_CORS_ORIGINS` on the API service.
+
+## Syncing leads from the AI platform
+
+1. CRM → **Settings → API keys → Create** (copy the `crm_live_…` key; shown once).
+2. Platform → **Operations → Connections → Standalone CRM**: base URL `https://realestate-crm-api-3zyr.onrender.com`, API key from step 1 → **Test** (calls `GET /v1/me`).
+3. Platform → **Operations → Routines**: create `Select leads → Qualify (Jev) → Push leads to CRM` (or the "Portal leads → qualify → CRM" template) and **Run now**.
+   Leads land via `POST /v1/leads` (idempotent on `external_id`) and scores/bands/summary via `PATCH /v1/leads/{id}`; re-runs update rather than duplicate.
