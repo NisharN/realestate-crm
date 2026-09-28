@@ -110,3 +110,12 @@ backoff (`CRM_WEBHOOK_MAX_ATTEMPTS`, default 5). Private/loopback destinations a
 All settings are `CRM_`-prefixed env vars (see `backend/app/config.py`): `DATABASE_URL`, `JWT_SECRET`
 (required in production), `CORS_ORIGINS`, `WEBHOOK_TIMEOUT_S`, `WEBHOOK_MAX_ATTEMPTS`,
 `WEBHOOK_INLINE_DELIVERY`, `DEMO_SEED`.
+
+## Deployment
+
+- **API** — Render web service (`render.yaml`, Docker, free Postgres; `alembic upgrade head` runs on boot):
+  https://realestate-crm-api-3zyr.onrender.com (auto-deploys from `main`, `backend/` root).
+  `postgres://` URLs from managed providers are normalised to `postgresql+asyncpg://` automatically.
+- **Web** — Vercel project `realestate-crm` (root `frontend/`, `NEXT_PUBLIC_CRM_API` points at the API):
+  https://realestate-crm-coral.vercel.app (auto-deploys from `main`).
+- Add every web origin to `CRM_CORS_ORIGINS` on the API service.
