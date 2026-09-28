@@ -1,0 +1,27 @@
+databases:
+  - name: realestate-crm-db
+    plan: free
+    databaseName: crm
+    user: crm
+
+services:
+  - type: web
+    name: realestate-crm-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8100"
+      - key: CRM_ENVIRONMENT
+        value: production
+      - key: CRM_DATABASE_URL
+        fromDatabase:
+          name: realestate-crm-db
+          property: connectionString
+      - key: CRM_JWT_SECRET
+        generateValue: true
+      - key: CRM_CORS_ORIGINS
+        value: '["https://realestate-crm-coral.vercel.app","https://realestate-crm-nishars-projects.vercel.app"]'

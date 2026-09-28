@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     webhook_inline_delivery: bool = True  # deliver right after the request; the 30s sweeper still retries
     demo_seed: bool = False
     api_page_limit: int = 500
+
+    @field_validator("database_url")
+    @classmethod
+    def _async_driver(cls, url: str) -> str:
+        """Managed Postgres providers hand out ``postgres://``/``postgresql://`` URLs; we always drive asyncpg."""
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                return "postgresql+asyncpg://" + url[len(prefix):]
+        return url
 
     @property
     def is_production(self) -> bool:
