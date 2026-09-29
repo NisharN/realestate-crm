@@ -94,7 +94,7 @@ export function Shell({ children }: { children: ReactNode }) {
 function Brand({ agency }: { agency: Agency | null }) {
   return (
     <div className="mb-6 px-1">
-      <div className="text-sm font-semibold tracking-tight">{agency?.name ?? "UAE Real Estate CRM"}</div>
+      <div className="text-sm font-semibold tracking-tight">{agency?.name ?? "PropX CRM"}</div>
       <div className="text-[11px] text-muted">{agency?.rera_orn ? `RERA ORN ${agency.rera_orn}` : "Broker workspace"}</div>
     </div>
   );

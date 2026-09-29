@@ -1,4 +1,4 @@
-# UAE Real Estate CRM
+# PropX CRM
 
 A CRM built for Dubai/UAE brokers and small agencies, and the **system of record** for the
 [realestateai](https://github.com/NisharN/realestateai) AI agent platform. The agent pulls leads from

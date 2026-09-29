@@ -164,7 +164,7 @@ async def test_webhook(webhook_id: str, principal: Principal = Depends(manager_u
     row = await session.get(Webhook, webhook_id)
     if not row or row.agency_id != principal.agency_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "webhook not found")
-    d = WebhookDelivery(agency_id=principal.agency_id, webhook_id=row.id, event="ping", payload={"message": "Test delivery from your UAE Real Estate CRM"})
+    d = WebhookDelivery(agency_id=principal.agency_id, webhook_id=row.id, event="ping", payload={"message": "Test delivery from your PropX CRM"})
     session.add(d)
     await session.commit()
     await deliver_pending(limit=200)

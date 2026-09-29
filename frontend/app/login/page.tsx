@@ -37,7 +37,7 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <div className="card w-full max-w-sm p-6">
-        <div className="kicker">UAE Real Estate CRM</div>
+        <div className="kicker">PropX CRM</div>
         <h1 className="mt-1 text-xl font-semibold tracking-tight">{mode === "login" ? "Sign in" : "Create your agency"}</h1>
         <p className="mt-1 text-sm text-muted">{mode === "login" ? "Your leads, listings and viewings in one place." : "You become the owner; add agents from Settings later."}</p>
 
