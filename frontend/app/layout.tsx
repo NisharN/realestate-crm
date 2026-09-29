@@ -4,7 +4,7 @@ import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
-export const metadata: Metadata = { title: "UAE Real Estate CRM", description: "Broker workspace: leads, listings, viewings, follow-ups and deals." };
+export const metadata: Metadata = { title: "PropX CRM", description: "Broker workspace: leads, listings, viewings, follow-ups and deals." };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="CRM_", extra="ignore")
 
-    app_name: str = "UAE Real Estate CRM"
+    app_name: str = "PropX CRM"
     environment: str = "development"
     database_url: str = "sqlite+aiosqlite:///./crm.db"
     jwt_secret: str = Field(default="change-me-in-production", min_length=8)
