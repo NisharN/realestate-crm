@@ -76,7 +76,7 @@ async def seed_demo() -> dict[str, str]:
                 budget_min_aed=float(rng.randint(8, 30) * 100_000) if purpose != "rent" else float(rng.randint(60, 150) * 1000), budget_max_aed=float(rng.randint(30, 80) * 100_000) if purpose != "rent" else float(rng.randint(150, 350) * 1000),
                 timeline=rng.choice(TIMELINES), payment_method=rng.choice(["cash", "mortgage", None]), stage=stage, stage_changed_at=created + timedelta(days=rng.randint(0, 5)), assigned_agent_id=agent.id if agent else None,
                 ai_score=score, ai_band=band_for(score), ai_scored_at=created + timedelta(hours=1) if score is not None else None, ai_summary=f"Wants a {purpose} in {areas[0]}; {rng.choice(TIMELINES)}." if score else None,
-                consent_marketing=True, last_contacted_at=None if stage == "new" else now - timedelta(days=rng.randint(0, 12)), next_follow_up_at=now + timedelta(days=rng.randint(-2, 6)) if stage in ("qualifying", "qualified", "handed_off") else None,
+                consent_marketing=True, consent_recorded_at=now, preferred_contact_channel=rng.choice(["call", "whatsapp", "email"]), last_contacted_at=None if stage == "new" else now - timedelta(days=rng.randint(0, 12)), next_follow_up_at=now + timedelta(days=rng.randint(-2, 6)) if stage in ("qualifying", "qualified", "handed_off") else None,
                 lost_reason="budget too low" if stage == "lost" else None,
             )
             lead.created_at = created

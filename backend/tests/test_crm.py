@@ -162,6 +162,7 @@ async def test_viewing_followup_deal_flow(client, tenant, lead_payload):
     vid = v.json()["viewing"]["id"]
     assert (await client.patch(f"/api/viewings/{vid}", json={"status": "confirmed"}, headers=tenant.h)).json()["viewing"]["status"] == "confirmed"
     assert (await client.patch(f"/api/viewings/{vid}", json={"status": "done", "feedback": "loved it"}, headers=tenant.h)).status_code == 200
+    await client.patch(f"/api/leads/{lead['id']}", json={"consent_marketing": True}, headers=tenant.h)
     f = await client.post("/api/followups", json={"lead_id": lead["id"], "due_at": when, "title": "Call back", "channel": "whatsapp"}, headers=tenant.h)
     assert f.status_code == 201
     assert (await client.get(f"/api/leads/{lead['id']}", headers=tenant.h)).json()["lead"]["next_follow_up_at"] is not None

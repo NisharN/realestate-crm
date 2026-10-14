@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.db import iso
-from app.models import Activity, Agency, ApiKey, Deal, Followup, Lead, Listing, User, Viewing, Webhook, WebhookDelivery
+from app.models import Activity, Agency, ApiKey, Deal, Followup, Lead, LeadScoreHistory, Listing, User, Viewing, Webhook, WebhookDelivery
 
 
 def agency(a: Agency) -> dict[str, Any]:
@@ -29,6 +29,9 @@ def lead(l: Lead, *, agent: User | None = None) -> dict[str, Any]:
         "assigned_agent_id": l.assigned_agent_id, "assigned_agent": user(agent) if agent else None,
         "ai_score": l.ai_score, "ai_band": l.ai_band, "ai_summary": l.ai_summary, "ai_scored_at": iso(l.ai_scored_at), "ai_broker_ref": l.ai_broker_ref,
         "consent_marketing": l.consent_marketing, "do_not_contact": l.do_not_contact,
+        "preferred_contact_channel": l.preferred_contact_channel, "preferred_contact_window": l.preferred_contact_window,
+        "whatsapp_call_consent": l.whatsapp_call_consent, "consent_recorded_at": iso(l.consent_recorded_at),
+        "outreach_eligible": l.outreach_eligible,
         "last_contacted_at": iso(l.last_contacted_at), "next_follow_up_at": iso(l.next_follow_up_at),
         "notes": l.notes, "tags": l.tags or [], "custom": l.custom or {},
         "created_at": iso(l.created_at), "updated_at": iso(l.updated_at),
@@ -62,7 +65,7 @@ def viewing(v: Viewing) -> dict[str, Any]:
 def followup(f: Followup) -> dict[str, Any]:
     return {
         "id": f.id, "lead_id": f.lead_id, "agent_id": f.agent_id, "due_at": iso(f.due_at), "channel": f.channel, "title": f.title, "note": f.note,
-        "status": f.status, "done_at": iso(f.done_at), "external_id": f.external_id, "created_at": iso(f.created_at), "updated_at": iso(f.updated_at),
+        "status": f.status, "done_at": iso(f.done_at), "outcome": f.outcome, "external_id": f.external_id, "created_at": iso(f.created_at), "updated_at": iso(f.updated_at),
     }
 
 
@@ -76,6 +79,10 @@ def deal(d: Deal) -> dict[str, Any]:
 
 def activity(a: Activity) -> dict[str, Any]:
     return {"id": a.id, "lead_id": a.lead_id, "listing_id": a.listing_id, "actor_type": a.actor_type, "actor_id": a.actor_id, "kind": a.kind, "summary": a.summary, "data": a.data or {}, "created_at": iso(a.created_at)}
+
+
+def score_history(row: LeadScoreHistory) -> dict[str, Any]:
+    return {"id": row.id, "score": row.score, "band": row.band, "stage": row.stage, "factors": row.factors or {}, "trigger": row.trigger, "created_at": iso(row.created_at)}
 
 
 def api_key(k: ApiKey) -> dict[str, Any]:

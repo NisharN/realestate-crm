@@ -95,6 +95,9 @@ class LeadBase(Strict):
     assigned_agent_id: str | None = None
     consent_marketing: bool | None = None
     do_not_contact: bool | None = None
+    preferred_contact_channel: Literal["call", "whatsapp", "email"] | None = None
+    preferred_contact_window: str | None = Field(default=None, max_length=80)
+    whatsapp_call_consent: bool | None = None
     next_follow_up_at: datetime | None = None
     notes: str | None = None
     tags: list[str] | None = None
@@ -122,7 +125,7 @@ class StageMove(Strict):
 
 
 class NoteIn(Strict):
-    kind: Literal["note", "call", "whatsapp", "email", "meeting", "voice_note"] = "note"
+    kind: Literal["note", "call", "whatsapp", "whatsapp_call", "email", "meeting", "voice_note"] = "note"
     summary: str = Field(min_length=1, max_length=400)
     data: dict[str, Any] = {}
     mark_contacted: bool = True
@@ -149,6 +152,8 @@ class LeadWriteBack(Strict):
     summary: str | None = Field(default=None, max_length=4000)
     last_contacted_at: datetime | None = None
     next_follow_up_at: datetime | None = None
+    preferred_contact_channel: Literal["call", "whatsapp", "email"] | None = None
+    preferred_contact_window: str | None = Field(default=None, max_length=80)
 
 
 class ActivityIn(Strict):
@@ -190,6 +195,15 @@ class ListingIn(Strict):
     owner_phone: str | None = None
     agent_id: str | None = None
     portals: dict[str, Any] = {}
+
+
+class ListingImport(ListingIn):
+    source: Literal["property_finder", "bayut", "dubizzle", "import", "other"] = "import"
+    external_id: str | None = Field(default=None, max_length=120)
+
+
+class ListingBatch(Strict):
+    listings: list[ListingImport]
 
 
 class ListingPatch(Strict):
@@ -254,17 +268,23 @@ class FollowupIn(Strict):
     lead_id: str
     due_at: datetime
     title: str = Field(min_length=1, max_length=200)
-    channel: Literal["call", "whatsapp", "email", "voice_note", "meeting"] = "call"
+    channel: Literal["call", "whatsapp", "whatsapp_call", "email", "voice_note", "meeting"] | None = None
     note: str | None = None
     agent_id: str | None = None
     external_id: str | None = None
 
 
+class HandoffIn(Strict):
+    assigned_agent_id: str | None = None
+    note: str = Field(min_length=1, max_length=1000)
+
+
 class FollowupPatch(Strict):
     due_at: datetime | None = None
     title: str | None = None
-    channel: Literal["call", "whatsapp", "email", "voice_note", "meeting"] | None = None
+    channel: Literal["call", "whatsapp", "whatsapp_call", "email", "voice_note", "meeting"] | None = None
     note: str | None = None
+    outcome: str | None = Field(default=None, max_length=4000)
     agent_id: str | None = None
     status: Literal["open", "done", "skipped"] | None = None
 
@@ -300,7 +320,7 @@ assert len(VIEWING_STATUSES) == 5 and len(FOLLOWUP_STATUSES) == 3 and len(DEAL_S
 # ---- settings -------------------------------------------------------------
 class ApiKeyIn(Strict):
     name: str = Field(min_length=1, max_length=80)
-    scopes: list[str] = ["leads:read", "leads:write", "listings:read", "viewings:read", "viewings:write", "followups:write", "agents:read"]
+    scopes: list[str] = ["leads:read", "leads:write", "listings:read", "listings:write", "viewings:read", "viewings:write", "followups:write", "agents:read"]
 
 
 class WebhookIn(Strict):

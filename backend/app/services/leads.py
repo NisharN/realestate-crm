@@ -11,7 +11,7 @@ from app.db import utcnow
 from app.models import CLOSED_STAGES, Activity, Lead, User
 from app.schemas import LeadCreate, LeadPatch, LeadWriteBack
 from app.serializers import lead as lead_json
-from app.services import webhooks
+from app.services import scoring, webhooks
 
 BAND_FOR_SCORE = ((70, "hot"), (40, "warm"), (0, "cold"))
 
@@ -77,13 +77,18 @@ async def create_or_merge(session: AsyncSession, agency_id: str, body: LeadCreat
         if stage and stage != existing.stage and existing.stage == "new":
             set_stage(existing, stage)
             changed.append("stage")
+        if changed:
+            await scoring.recalculate(session, existing, trigger="lead_updated")
         log(session, agency_id, lead_id=existing.id, kind="merged", summary=f"Duplicate enquiry merged from {data.get('source') or 'unknown source'}", actor_type=actor_type, actor_id=actor_id, data={"fields": changed})
         await webhooks.emit(session, agency_id, "lead.updated", {"lead": lead_json(existing), "changed": changed})
         return existing, False
     lead = Lead(agency_id=agency_id, source=data.pop("source", None) or "other")
     _apply(lead, data)
+    if lead.consent_marketing or lead.whatsapp_call_consent:
+        lead.consent_recorded_at = utcnow()
     session.add(lead)
     await session.flush()
+    await scoring.recalculate(session, lead, trigger="lead_created")
     log(session, agency_id, lead_id=lead.id, kind="created", summary=f"Lead created from {lead.source}", actor_type=actor_type, actor_id=actor_id)
     await webhooks.emit(session, agency_id, "lead.created", {"lead": lead_json(lead)})
     return lead, True
@@ -103,7 +108,11 @@ async def patch(session: AsyncSession, lead: Lead, body: LeadPatch, *, actor_typ
     data = body.model_dump(exclude_unset=True)
     stage = data.pop("stage", None)
     lost_reason = data.pop("lost_reason", None)
+    consent_changed = any(key in data and data[key] is not None and data[key] != getattr(lead, key) for key in ("consent_marketing", "whatsapp_call_consent"))
     changed = _apply(lead, data)
+    if consent_changed:
+        lead.consent_recorded_at = utcnow()
+        changed.append("consent_recorded_at")
     if stage and stage != lead.stage:
         previous = lead.stage
         set_stage(lead, stage, lost_reason=lost_reason)
@@ -113,6 +122,9 @@ async def patch(session: AsyncSession, lead: Lead, body: LeadPatch, *, actor_typ
         lead.lost_reason = lost_reason
         changed.append("lost_reason")
     if changed:
+        if consent_changed:
+            log(session, lead.agency_id, lead_id=lead.id, kind="consent_updated", summary="Contact consent preferences updated", actor_type=actor_type, actor_id=actor_id, data={"marketing": lead.consent_marketing, "whatsapp_call": lead.whatsapp_call_consent, "preferred_channel": lead.preferred_contact_channel})
+        await scoring.recalculate(session, lead, trigger="lead_updated")
         lead.updated_at = utcnow()
         await webhooks.emit(session, lead.agency_id, "lead.updated", {"lead": lead_json(lead), "changed": changed})
     return changed
@@ -147,7 +159,7 @@ async def write_back(session: AsyncSession, lead: Lead, body: LeadWriteBack, *, 
             lead.assigned_agent_id = agent.id
             changed.append("assigned_agent_id")
             log(session, lead.agency_id, lead_id=lead.id, kind="assigned", summary=f"Assigned to {agent.full_name} (AI agent)", actor_type="api", actor_id=actor_id)
-    fill = {k: data.get(k) for k in ("purpose", "timeline", "budget_min_aed", "budget_max_aed")}
+    fill = {k: data.get(k) for k in ("purpose", "timeline", "budget_min_aed", "budget_max_aed", "preferred_contact_channel", "preferred_contact_window")}
     changed += _apply(lead, fill, fill_only=True)
     area = data.get("area_preference")
     if area and not lead.areas:
