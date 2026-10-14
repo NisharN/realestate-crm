@@ -18,11 +18,25 @@ export default function SettingsPage() {
       <div className="space-y-4">
         <AgencyCard agency={me?.agency ?? null} />
         {isManager && <TeamCard />}
+        {isManager && <IntegrationGuide />}
         {isManager && <ApiKeysCard />}
         {isManager && <WebhooksCard />}
         {me && !isManager && <p className="text-sm text-muted">API keys, webhooks and team management are available to owners and managers.</p>}
       </div>
     </>
+  );
+}
+
+function IntegrationGuide() {
+  return (
+    <Card title="Portal and CRM sync" description="Connect a vendor integration or agency CRM using normalized API records.">
+      <p className="text-sm">The CRM accepts deduplicated lead imports and listing upserts from Property Finder, Bayut, Dubizzle, or another connected system.</p>
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+        <div className="rounded-lg bg-canvas p-3"><div className="font-medium">Leads</div><code className="mt-1 block">POST {API_BASE}/v1/leads</code><span className="text-muted">Use leads:write; include source and the vendor’s external_id.</span></div>
+        <div className="rounded-lg bg-canvas p-3"><div className="font-medium">Properties</div><code className="mt-1 block">POST {API_BASE}/v1/listings</code><span className="text-muted">Use listings:write; send one listing or a listings array.</span></div>
+      </div>
+      <p className="mt-3 text-xs text-muted">Live portal access must be enabled for your agency by each provider. Their API/feed credentials belong in your integration service; this CRM does not scrape portal pages. Calls and messages remain agent-owned tasks until a compliant messaging provider is configured.</p>
+    </Card>
   );
 }
 
@@ -170,7 +184,7 @@ function ApiKeysCard() {
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
   const [name, setName] = useState("AI agent platform");
-  const [scopes, setScopes] = useState<string[]>(SCOPES.filter((s) => s !== "listings:write"));
+  const [scopes, setScopes] = useState<string[]>(SCOPES.filter((s) => s !== "followups:read"));
   const [error, setError] = useState<unknown>(null);
 
   const submit = async (e: FormEvent) => {

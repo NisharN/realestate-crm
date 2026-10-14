@@ -12,6 +12,7 @@ or the opaque ``cursor`` returned in ``paging.next``. Every response also includ
 from __future__ import annotations
 
 import base64
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -25,8 +26,10 @@ from app.config import get_settings
 from app.db import utcnow
 from app.deps import Principal, SessionDep, api_principal
 from app.models import PIPELINE_STAGES, Agency, Followup, Lead, Listing, User, Viewing
-from app.schemas import ActivityIn, FollowupIn, LeadCreate, LeadWriteBack, ViewingIn, ViewingPatch
+from app.schemas import ActivityIn, FollowupIn, LeadCreate, LeadWriteBack, ListingBatch, ListingImport, ViewingIn, ViewingPatch
 from app.services import leads as svc
+from app.services import scoring
+from app.services.followups import validate_channel, validate_time
 from app.services.webhooks import deliver_soon, emit
 
 router = APIRouter(prefix="/v1", tags=["integration"])
@@ -169,9 +172,10 @@ async def add_activity(lead_id: str, body: ActivityIn, tasks: BackgroundTasks, p
     principal.require("leads:write")
     row = await _load(session, principal, lead_id)
     act = svc.log(session, principal.agency_id, lead_id=row.id, kind=body.kind, summary=body.summary, actor_type="api", actor_id=body.actor_id or principal.id, data=body.data, created_at=body.occurred_at)
-    if body.kind in ("whatsapp", "call", "email", "voice_note", "meeting"):
+    if body.kind in ("whatsapp", "whatsapp_call", "call", "email", "voice_note", "meeting"):
         row.last_contacted_at = (body.occurred_at.replace(tzinfo=None) if body.occurred_at and body.occurred_at.tzinfo else body.occurred_at) or utcnow()
         await emit(session, principal.agency_id, "lead.contacted", {"lead": serializers.lead(row), "activity": {"kind": body.kind, "summary": body.summary}})
+        await scoring.recalculate(session, row, trigger="external_contact_logged")
     await session.commit()
     tasks.add_task(deliver_soon)
     return {"activity": serializers.activity(act)}
@@ -197,6 +201,64 @@ async def list_listings(
         q = q.where(Listing.listing_type == listing_type)
     rows = (await session.execute(_paged(Listing, q, updated_after=updated_after, cursor=cursor).limit(limit + 1))).scalars().all()
     return _page(list(rows), limit, serializers.listing)
+
+
+@router.post("/listings", status_code=201)
+async def import_listings(body: ListingImport | ListingBatch, tasks: BackgroundTasks, principal: Principal = Depends(api_principal), session: AsyncSession = SessionDep) -> dict:
+    """Idempotent normalized listing import for portal/agency CRM adapters."""
+    principal.require("listings:write")
+    items = body.listings if isinstance(body, ListingBatch) else [body]
+    if len(items) > 500:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "max 500 listings per request")
+    results = []
+    for item in items:
+        data = item.model_dump(exclude={"source", "external_id"})
+        if data.get("agent_id") and not await session.scalar(select(User.id).where(User.id == data["agent_id"], User.agency_id == principal.agency_id, User.active.is_(True))):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "unknown or inactive listing agent")
+        portal = item.source
+        portals = dict(data.get("portals") or {})
+        portal_info = dict(portals.get(portal) or {})
+        portal_info.update({"external_id": item.external_id, "source_reference": item.reference, "synced_at": utcnow().isoformat()})
+        portals[portal] = portal_info
+        data["portals"] = portals
+
+        existing = None
+        rows = (await session.execute(select(Listing).where(Listing.agency_id == principal.agency_id, Listing.deleted_at.is_(None)))).scalars().all()
+        if item.external_id:
+            existing = next((row for row in rows if (row.portals or {}).get(portal, {}).get("external_id") == item.external_id), None)
+        if existing is None and not item.external_id:
+            existing = next((row for row in rows if row.reference == item.reference), None)
+        created = existing is None
+        if existing:
+            data["reference"] = existing.reference
+            for key, value in data.items():
+                if key != "portals":
+                    setattr(existing, key, value)
+            existing.portals = {**(existing.portals or {}), **portals}
+            existing.updated_at = utcnow()
+        else:
+            # Portal references are only unique within a source. Keep a stable CRM key across imports.
+            source_reference = item.external_id or item.reference
+            key = f"{portal}:{source_reference}"
+            suffix = hashlib.sha256(key.encode()).hexdigest()[:24] if len(key) > 72 else source_reference
+            data["reference"] = f"{portal[:3]}-{suffix}"[:80]
+            collision = next((row for row in rows if row.reference == data["reference"]), None)
+            if collision:
+                existing = collision
+                created = False
+                for key, value in data.items():
+                    if key != "portals":
+                        setattr(existing, key, value)
+                existing.portals = {**(existing.portals or {}), **portals}
+            else:
+                existing = Listing(agency_id=principal.agency_id, **data)
+                session.add(existing)
+        await session.flush()
+        await emit(session, principal.agency_id, "listing.created" if created else "listing.updated", {"listing": serializers.listing(existing), "source": portal})
+        results.append({"id": existing.id, "reference": existing.reference, "source": portal, "external_id": item.external_id, "created": created})
+    await session.commit()
+    tasks.add_task(deliver_soon)
+    return {"results": results, "created": sum(1 for result in results if result["created"]), "updated": sum(1 for result in results if not result["created"])}
 
 
 # ---- viewings / follow-ups -------------------------------------------------------
@@ -259,17 +321,25 @@ async def patch_viewing(viewing_id: str, body: ViewingPatch, tasks: BackgroundTa
 async def create_followup(body: FollowupIn, tasks: BackgroundTasks, principal: Principal = Depends(api_principal), session: AsyncSession = SessionDep) -> dict:
     principal.require("followups:write")
     lead = await _load(session, principal, body.lead_id)
+    channel = body.channel or (lead.preferred_contact_channel if lead.outreach_eligible else None) or "call"
+    if channel == "whatsapp_call":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "WhatsApp call tasks must be scheduled by an authenticated broker or agent")
+    validate_channel(lead, channel)
+    validate_time(lead, channel, body.due_at)
     if body.external_id:
         dup = (await session.execute(select(Followup).where(Followup.agency_id == principal.agency_id, Followup.external_id == body.external_id))).scalar_one_or_none()
         if dup:
             return {"followup": serializers.followup(dup), "created": False}
     due = body.due_at.replace(tzinfo=None) if body.due_at.tzinfo else body.due_at
-    row = Followup(agency_id=principal.agency_id, lead_id=lead.id, agent_id=body.agent_id or lead.assigned_agent_id, due_at=due, channel=body.channel, title=body.title, note=body.note, external_id=body.external_id)
+    agent_id = body.agent_id or lead.assigned_agent_id
+    if agent_id and not await session.scalar(select(User.id).where(User.id == agent_id, User.agency_id == principal.agency_id, User.active.is_(True))):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "unknown or inactive agent")
+    row = Followup(agency_id=principal.agency_id, lead_id=lead.id, agent_id=agent_id, due_at=due, channel=channel, title=body.title, note=body.note, external_id=body.external_id)
     session.add(row)
     await session.flush()
     if lead.next_follow_up_at is None or due < lead.next_follow_up_at:
         lead.next_follow_up_at = due
-    svc.log(session, principal.agency_id, lead_id=lead.id, kind="followup_scheduled", summary=f"{body.channel.replace('_', ' ').title()} follow-up scheduled (AI agent)", actor_type="api", actor_id=principal.id, data={"followup_id": row.id})
+    svc.log(session, principal.agency_id, lead_id=lead.id, kind="followup_scheduled", summary=f"{channel.replace('_', ' ').title()} follow-up scheduled (AI agent)", actor_type="api", actor_id=principal.id, data={"followup_id": row.id})
     await emit(session, principal.agency_id, "followup.created", {"followup": serializers.followup(row), "lead": serializers.lead(lead)})
     await session.commit()
     tasks.add_task(deliver_soon)

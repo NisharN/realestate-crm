@@ -7,14 +7,16 @@ import { Empty, PageHeader, StatusChip } from "@/components/ui";
 import { api, fmtDate, relTime, useApi } from "@/lib/api";
 import type { Followup } from "@/lib/types";
 
-const ICON: Record<string, typeof Phone> = { call: Phone, whatsapp: MessageCircle, email: Mail, voice_note: Mic, meeting: Users };
+const ICON: Record<string, typeof Phone> = { call: Phone, whatsapp: MessageCircle, whatsapp_call: Phone, email: Mail, voice_note: Mic, meeting: Users };
 
 export default function FollowupsPage() {
   const [status, setStatus] = useState<"open" | "done" | "skipped">("open");
   const { data, mutate } = useApi<{ items: Followup[] }>(`/api/followups?status=${status}&limit=300`);
 
   const patch = async (id: string, s: string) => {
-    await api(`/api/followups/${id}`, { method: "PATCH", json: { status: s } });
+    const outcome = s === "done" ? window.prompt("Record the result so the CRM history stays current:") : null;
+    if (s === "done" && outcome === null) return;
+    await api(`/api/followups/${id}`, { method: "PATCH", json: { status: s, ...(s === "done" ? { outcome } : {}) } });
     await mutate();
   };
 
@@ -78,6 +80,7 @@ function Group({ title, tone, items, onPatch }: { title: string; tone?: string; 
                   <div className="text-xs text-muted">
                     <span className={f.overdue ? "text-danger" : undefined}>{fmtDate(f.due_at, true)}</span> · {relTime(f.due_at)}
                     {f.note && <span> · {f.note}</span>}
+                    {f.outcome && <span> · Result: {f.outcome}</span>}
                   </div>
                 </div>
               </div>

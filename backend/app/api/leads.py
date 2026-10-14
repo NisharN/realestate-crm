@@ -9,9 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import serializers
 from app.db import utcnow
 from app.deps import Principal, SessionDep, current_user
-from app.models import PIPELINE_STAGES, Activity, Deal, Followup, Lead, User, Viewing
-from app.schemas import LeadCreate, LeadPatch, NoteIn, StageMove
+from app.models import PIPELINE_STAGES, Activity, Deal, Followup, Lead, LeadScoreHistory, User, Viewing
+from app.schemas import HandoffIn, LeadCreate, LeadPatch, NoteIn, StageMove
 from app.services import leads as svc
+from app.services import scoring
 from app.services.webhooks import deliver_soon, emit
 
 router = APIRouter(prefix="/leads", tags=["leads"])
@@ -50,7 +51,7 @@ async def list_leads(
     agent_id: str | None = None,
     area: str | None = None,
     open_only: bool = True,
-    sort: str = Query(default="updated_at", pattern="^(updated_at|created_at|ai_score|next_follow_up_at|budget_max_aed)$"),
+    sort: str = Query(default="ai_score", pattern="^(updated_at|created_at|ai_score|next_follow_up_at|budget_max_aed)$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
@@ -143,6 +144,82 @@ async def get_lead(lead_id: str, principal: Principal = Depends(current_user), s
     }
 
 
+@router.get("/{lead_id}/recommendations")
+async def lead_recommendations(lead_id: str, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
+    lead = await load_lead(session, principal, lead_id)
+    matches = await scoring.recommendations(session, lead)
+    return {"items": [{"listing": serializers.listing(row["listing"]), "score": row["score"], "factors": row["factors"]} for row in matches]}
+
+
+@router.get("/{lead_id}/scores")
+async def lead_scores(lead_id: str, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
+    lead = await load_lead(session, principal, lead_id)
+    rows = (await session.execute(select(LeadScoreHistory).where(
+        LeadScoreHistory.agency_id == principal.agency_id,
+        LeadScoreHistory.lead_id == lead.id,
+    ).order_by(LeadScoreHistory.created_at.desc()).limit(100))).scalars().all()
+    return {"items": [serializers.score_history(row) for row in rows]}
+
+
+@router.post("/{lead_id}/score")
+async def rescore_lead(lead_id: str, tasks: BackgroundTasks, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
+    lead = await load_lead(session, principal, lead_id)
+    result = await scoring.recalculate(session, lead, trigger="manual")
+    await session.commit()
+    tasks.add_task(deliver_soon)
+    return result
+
+
+@router.post("/{lead_id}/qualify")
+async def qualify_lead(lead_id: str, tasks: BackgroundTasks, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
+    lead = await load_lead(session, principal, lead_id)
+    result = await scoring.recalculate(session, lead, trigger="qualification_review")
+    missing = [label for label, present in (
+        ("contact method", bool(lead.phone or lead.email)),
+        ("purchase or rental intent", bool(lead.purpose)),
+        ("budget", lead.budget_max_aed is not None),
+        ("preferred area", bool(lead.areas)),
+    ) if not present]
+    if result["score"] < 60:
+        missing.append("priority score of at least 60")
+    if missing:
+        await session.commit()
+        tasks.add_task(deliver_soon)
+        return {"qualified": False, "missing": missing, "score": result["score"], "band": result["band"]}
+    previous = lead.stage
+    if lead.stage in ("new", "qualifying"):
+        svc.set_stage(lead, "qualified")
+        svc.log(session, principal.agency_id, lead_id=lead.id, kind="qualified", summary=f"Qualified at priority {result['score']}/100", actor_type="user", actor_id=principal.id, data={"from_stage": previous, "score": result["score"], "factors": result["factors"]})
+        result = await scoring.recalculate(session, lead, trigger="qualified")
+    await emit(session, principal.agency_id, "lead.updated", {"lead": serializers.lead(lead), "changed": ["stage", "ai_score", "ai_band"]})
+    await session.commit()
+    tasks.add_task(deliver_soon)
+    return {"qualified": True, "lead": serializers.lead(lead), "score": result["score"], "band": result["band"]}
+
+
+@router.post("/{lead_id}/handoff")
+async def handoff_lead(lead_id: str, body: HandoffIn, tasks: BackgroundTasks, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
+    lead = await load_lead(session, principal, lead_id)
+    if lead.stage in ("closed", "lost", "opted_out"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "closed or opted-out leads cannot be handed off")
+    assigned_agent_id = body.assigned_agent_id or lead.assigned_agent_id or principal.id
+    agent = await session.get(User, assigned_agent_id)
+    if not agent or agent.agency_id != principal.agency_id or not agent.active:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "unknown or inactive agent")
+    if not principal.is_manager and assigned_agent_id != principal.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "agents can only hand off to themselves")
+    lead.assigned_agent_id = assigned_agent_id
+    previous = lead.stage
+    if previous not in ("closed", "lost", "opted_out"):
+        svc.set_stage(lead, "handed_off")
+    svc.log(session, principal.agency_id, lead_id=lead.id, kind="handed_off", summary=f"Handed to {agent.full_name}: {body.note}", actor_type="user", actor_id=principal.id, data={"from_stage": previous, "to_agent_id": agent.id, "note": body.note})
+    await scoring.recalculate(session, lead, trigger="handoff")
+    await emit(session, principal.agency_id, "lead.updated", {"lead": serializers.lead(lead), "changed": ["stage", "assigned_agent_id"]})
+    await session.commit()
+    tasks.add_task(deliver_soon)
+    return {"lead": serializers.lead(lead), "handoff_to": serializers.user(agent)}
+
+
 @router.patch("/{lead_id}")
 async def patch_lead(lead_id: str, body: LeadPatch, tasks: BackgroundTasks, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
     lead = await load_lead(session, principal, lead_id)
@@ -174,9 +251,10 @@ async def move_stage(lead_id: str, body: StageMove, tasks: BackgroundTasks, prin
 async def add_note(lead_id: str, body: NoteIn, tasks: BackgroundTasks, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
     lead = await load_lead(session, principal, lead_id)
     row = svc.log(session, principal.agency_id, lead_id=lead.id, kind=body.kind, summary=body.summary, actor_type="user", actor_id=principal.id, data=body.data)
-    if body.mark_contacted and body.kind in ("call", "whatsapp", "email", "meeting", "voice_note"):
+    if body.mark_contacted and body.kind in ("call", "whatsapp", "whatsapp_call", "email", "meeting", "voice_note"):
         lead.last_contacted_at = utcnow()
         await emit(session, principal.agency_id, "lead.contacted", {"lead": serializers.lead(lead), "activity": {"kind": body.kind, "summary": body.summary}})
+        await scoring.recalculate(session, lead, trigger="contact_logged")
     await session.commit()
     tasks.add_task(deliver_soon)
     return {"activity": serializers.activity(row)}

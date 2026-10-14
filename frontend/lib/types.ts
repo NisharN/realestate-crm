@@ -61,6 +61,11 @@ export interface Lead {
   ai_scored_at: string | null;
   consent_marketing: boolean;
   do_not_contact: boolean;
+  preferred_contact_channel: "call" | "whatsapp" | "email" | null;
+  preferred_contact_window: string | null;
+  whatsapp_call_consent: boolean;
+  consent_recorded_at: string | null;
+  outreach_eligible: boolean;
   last_contacted_at: string | null;
   next_follow_up_at: string | null;
   notes: string | null;
@@ -145,6 +150,7 @@ export interface Followup {
   title: string;
   channel: string;
   note: string | null;
+  outcome: string | null;
   status: string;
   done_at: string | null;
   external_id: string | null;
@@ -229,6 +235,22 @@ export interface LeadDetail {
   viewings: Viewing[];
   followups: Followup[];
   deals: Deal[];
+}
+
+export interface RecommendedListing {
+  listing: Listing;
+  score: number;
+  factors: Record<string, { points: number; reason: string }>;
+}
+
+export interface LeadScoreSnapshot {
+  id: string;
+  score: number;
+  band: "hot" | "warm" | "cold";
+  stage: string;
+  factors: Record<string, { score: number; max: number; reason: string }>;
+  trigger: string;
+  created_at: string;
 }
 
 export interface Pipeline {

@@ -13,10 +13,10 @@ frontend/  Next.js 14 broker workspace (port 3100)
 
 | Area | Highlights |
 | --- | --- |
-| Leads | Pipeline (new → qualifying → qualified → handed off → viewing booked → offer → closed/lost), dedupe on `source+external_id` then phone/e-mail, AI score/band/summary fields, assignment, timeline |
-| Listings | Sale & rent, Trakheesi permit + DLD number, owner details hidden from agents, "still available" verification + stale-inventory view |
+| Leads | Pipeline (new → qualifying → qualified → handed off → viewing booked → offer → closed/lost), dedupe on `source+external_id` then phone/e-mail, explainable 0–100 priority score, assignment, timeline |
+| Listings | Sale & rent, Trakheesi permit + DLD number, owner details hidden from agents, portal/CRM imports, lead-to-listing suggestions, availability verification |
 | Viewings | requested → confirmed → done / no-show / cancelled, feedback |
-| Follow-ups | call / WhatsApp / e-mail / voice-note / meeting, due queue, marks lead as contacted |
+| Follow-ups | call / WhatsApp / WhatsApp call / e-mail / voice-note / meeting tasks, due queue, human completion and CRM write-back |
 | Deals | offer → MOU → deposit → transfer → closed, commission calculation |
 | Team | owner / manager / agent roles; agents only see their own leads |
 | Integrations | Scoped API keys, changed-since sync, idempotent upserts, signed webhooks with retries |
@@ -58,7 +58,7 @@ docker compose up --build
 ## Tests & checks
 
 ```bash
-cd backend && ruff check . && pytest -q          # 15 tests: auth, tenancy, scopes, sync, webhooks…
+cd backend && ruff check . && pytest -q          # auth, tenancy, scopes, sync, webhooks…
 cd frontend && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -88,6 +88,7 @@ Authenticate with `Authorization: Bearer crm_live_…` (create keys under Settin
 | PATCH | `/v1/leads/{id}` | `leads:write` | write-back: `ai_score`, `ai_band`, `ai_summary`, `stage`, `assigned_agent_id`, requirement fields |
 | POST | `/v1/leads/{id}/activities` | `leads:write` | timeline entries (`mark_contacted` optional) |
 | GET | `/v1/listings` | `listings:read` | changed-since paging, owner fields never exposed |
+| POST | `/v1/listings` | `listings:write` | one normalized listing or `{"listings":[…]}`; pass `source` (`property_finder`, `bayut`, `dubizzle`, etc.) and vendor `external_id` for idempotent upsert |
 | GET/POST/PATCH | `/v1/viewings` | `viewings:*` | POST is idempotent on `external_id` |
 | POST | `/v1/followups` | `followups:write` | |
 
@@ -126,3 +127,32 @@ All settings are `CRM_`-prefixed env vars (see `backend/app/config.py`): `DATABA
 2. Platform → **Operations → Connections → Standalone CRM**: base URL `https://realestate-crm-api-3zyr.onrender.com`, API key from step 1 → **Test** (calls `GET /v1/me`).
 3. Platform → **Operations → Routines**: create `Select leads → Qualify (Jev) → Push leads to CRM` (or the "Portal leads → qualify → CRM" template) and **Run now**.
    Leads land via `POST /v1/leads` (idempotent on `external_id`) and scores/bands/summary via `PATCH /v1/leads/{id}`; re-runs update rather than duplicate.
+
+## Priority, matching, and handoff workflow
+
+New leads are scored locally and receive a score history snapshot with factors and the trigger. The 100-point model is deterministic and transparent: contactability (15), intent (10), timeline (15), budget (10), preferred area (10), property requirements (5), suitable live inventory (20), recent contact/viewing activity (10), and pipeline progress (5). Bands are hot (70+), warm (40–69), and cold (0–39). Marketing consent and Do Not Contact are kept separate from business priority.
+
+The qualification action recalculates the score and requires a contact method, purpose, budget, preferred area, and a score of at least 60. Property suggestions rank live listings by purpose, property type, bedrooms, area, and budget fit. The lead screen shows the matching factors and can start a viewing request from a suggestion.
+
+Use `GET /api/leads/{id}/scores`, `POST /api/leads/{id}/score`, and `GET /api/leads/{id}/recommendations` for the local workflow. `POST /api/leads/{id}/handoff` assigns the lead to an active agency agent and records the handoff note. Completed follow-ups, contacts, viewings, stage changes, and deals are added to the activity history and cause a score refresh.
+
+Follow-ups are agent-owned reminders. This release does not send WhatsApp, e-mail, or voice calls automatically. WhatsApp messages and voice notes require marketing consent; WhatsApp-call tasks also require separate call permission. The UI hides contact links when consent is missing or Do Not Contact is enabled. A configured messaging/voice provider and agency credentials are required before outbound delivery can be enabled.
+
+Portal data arrives through normalized, idempotent CRM imports. Property Finder’s [Enterprise API](https://support.propertyfinder.ae/hc/en-us/articles/28266806720914-How-to-integrate-your-CRM-with-PF-Expert-2-0-using-the-Enterprise-API) provides lead and listing access after the agency enables credentials. Bayut’s [Leads API](https://support.bayut.com/hc/en-us/articles/16703746688786-What-is-the-Leads-API) delivers leads into an agency CRM, and Bayut/dubizzle bulk property sync uses an [XML integration](https://support.bayut.com/hc/en-us/articles/18984946157714-Our-listings-are-posted-through-our-own-CRM-What-are-the-guidelines-for-posting-an-Off-plan-listing). This repo includes a normalized intake API but does not yet poll provider APIs, store provider credentials, or convert each provider’s native payload/feed format; those require the agency’s provider access and exact account documentation.
+
+Example normalized listing import (a batch uses `{"listings":[…]}` with the same shape):
+
+```json
+{
+  "source": "bayut",
+  "external_id": "vendor-listing-123",
+  "reference": "BAY-123",
+  "title": "Two-bedroom apartment",
+  "listing_type": "sale",
+  "status": "live",
+  "property_type": "apartment",
+  "community": "Dubai Marina",
+  "bedrooms": 2,
+  "price_aed": 2400000
+}
+```

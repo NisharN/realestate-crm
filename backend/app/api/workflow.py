@@ -14,6 +14,8 @@ from app.deps import Principal, SessionDep, current_user
 from app.models import Deal, Followup, Lead, Listing, Viewing
 from app.schemas import DealIn, DealPatch, FollowupIn, FollowupPatch, LeadPatch, ViewingIn, ViewingPatch
 from app.services import leads as svc
+from app.services import scoring
+from app.services.followups import validate_channel, validate_time
 from app.services.webhooks import deliver_soon, emit
 
 router = APIRouter(tags=["workflow"])
@@ -101,6 +103,7 @@ async def patch_viewing(viewing_id: str, body: ViewingPatch, tasks: BackgroundTa
         svc.log(session, principal.agency_id, lead_id=row.lead_id, kind="viewing", summary=f"Viewing {row.status}" + (f": {row.feedback}" if row.feedback and row.status == "done" else ""), actor_type="user", actor_id=principal.id, data={"viewing_id": row.id})
         if lead and row.status == "done":
             lead.last_contacted_at = utcnow()
+            await scoring.recalculate(session, lead, trigger="viewing_completed")
     if changed:
         await emit(session, principal.agency_id, "viewing.updated", {"viewing": serializers.viewing(row), "changed": changed})
     await session.commit()
@@ -134,12 +137,15 @@ async def list_followups(
 @router.post("/followups", status_code=201)
 async def create_followup(body: FollowupIn, tasks: BackgroundTasks, principal: Principal = Depends(current_user), session: AsyncSession = SessionDep) -> dict:
     lead = await load_lead(session, principal, body.lead_id)
-    row = Followup(agency_id=principal.agency_id, lead_id=lead.id, agent_id=body.agent_id or lead.assigned_agent_id or principal.id, due_at=_naive(body.due_at), channel=body.channel, title=body.title, note=body.note, external_id=body.external_id)
+    channel = body.channel or (lead.preferred_contact_channel if lead.outreach_eligible else None) or "call"
+    validate_channel(lead, channel)
+    validate_time(lead, channel, body.due_at)
+    row = Followup(agency_id=principal.agency_id, lead_id=lead.id, agent_id=body.agent_id or lead.assigned_agent_id or principal.id, due_at=_naive(body.due_at), channel=channel, title=body.title, note=body.note, external_id=body.external_id)
     session.add(row)
     await session.flush()
     if lead.next_follow_up_at is None or row.due_at < lead.next_follow_up_at:
         lead.next_follow_up_at = row.due_at
-    svc.log(session, principal.agency_id, lead_id=lead.id, kind="followup_scheduled", summary=f"{body.channel.replace('_', ' ').title()} follow-up scheduled for {row.due_at:%d %b %H:%M}", actor_type="user", actor_id=principal.id, data={"followup_id": row.id})
+    svc.log(session, principal.agency_id, lead_id=lead.id, kind="followup_scheduled", summary=f"{channel.replace('_', ' ').title()} follow-up scheduled for {row.due_at:%d %b %H:%M}", actor_type="user", actor_id=principal.id, data={"followup_id": row.id})
     await emit(session, principal.agency_id, "followup.created", {"followup": serializers.followup(row), "lead": serializers.lead(lead)})
     await session.commit()
     tasks.add_task(deliver_soon)
@@ -157,13 +163,26 @@ async def patch_followup(followup_id: str, body: FollowupPatch, tasks: Backgroun
     changed = [k for k, v in data.items() if getattr(row, k) != v]
     for k in changed:
         setattr(row, k, data[k])
-    if "status" in changed and row.status == "done":
-        row.done_at = utcnow()
+    if "status" in changed:
+        if row.status == "done":
+            row.done_at = utcnow()
+        elif row.status == "open":
+            row.done_at = None
         lead = await load_lead(session, principal, row.lead_id)
-        lead.last_contacted_at = utcnow()
-        nxt = (await session.execute(select(Followup.due_at).where(Followup.lead_id == lead.id, Followup.status == "open", Followup.id != row.id).order_by(Followup.due_at).limit(1))).scalar_one_or_none()
-        lead.next_follow_up_at = nxt
-        svc.log(session, principal.agency_id, lead_id=lead.id, kind=row.channel if row.channel in ("call", "whatsapp", "email", "meeting", "voice_note") else "note", summary=f"Done: {row.title}", actor_type="user", actor_id=principal.id, data={"followup_id": row.id})
+        open_query = select(Followup.due_at).where(Followup.lead_id == lead.id, Followup.status == "open").order_by(Followup.due_at).limit(1)
+        if row.status != "open":
+            open_query = open_query.where(Followup.id != row.id)
+        lead.next_follow_up_at = (await session.execute(open_query)).scalar_one_or_none()
+        if row.status == "done":
+            lead.last_contacted_at = utcnow()
+            summary = f"Done: {row.title}" + (f" — {row.outcome}" if row.outcome else "")
+            svc.log(session, principal.agency_id, lead_id=lead.id, kind=row.channel if row.channel in ("call", "whatsapp", "whatsapp_call", "email", "meeting", "voice_note") else "note", summary=summary, actor_type="user", actor_id=principal.id, data={"followup_id": row.id, "outcome": row.outcome})
+            await scoring.recalculate(session, lead, trigger="followup_completed")
+        elif row.status == "skipped":
+            svc.log(session, principal.agency_id, lead_id=lead.id, kind="followup_skipped", summary=f"Skipped: {row.title}", actor_type="user", actor_id=principal.id, data={"followup_id": row.id})
+    elif "due_at" in changed and row.status == "open":
+        lead = await load_lead(session, principal, row.lead_id)
+        lead.next_follow_up_at = (await session.execute(select(Followup.due_at).where(Followup.lead_id == lead.id, Followup.status == "open").order_by(Followup.due_at).limit(1))).scalar_one_or_none()
     if changed:
         await emit(session, principal.agency_id, "followup.updated", {"followup": serializers.followup(row), "changed": changed})
     await session.commit()

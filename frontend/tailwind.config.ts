@@ -17,7 +17,7 @@ const config: Config = {
       },
       borderRadius: { xl: "0.9rem", "2xl": "1.2rem" },
       boxShadow: { card: "0 1px 2px hsl(24 12% 12% / 0.04), 0 1px 0 hsl(24 12% 12% / 0.03)" },
-      fontFamily: { sans: ["var(--font-sans)", "system-ui", "sans-serif"] },
+      fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] },
     },
   },
   plugins: [],
