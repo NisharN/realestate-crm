@@ -211,6 +211,14 @@ async def import_listings(body: ListingImport | ListingBatch, tasks: BackgroundT
     if len(items) > 500:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "max 500 listings per request")
     results = []
+    rows = (await session.execute(select(Listing).where(Listing.agency_id == principal.agency_id, Listing.deleted_at.is_(None)))).scalars().all()
+    by_reference = {row.reference: row for row in rows}
+    by_external = {
+        (portal, info.get("external_id")): row
+        for row in rows
+        for portal, info in (row.portals or {}).items()
+        if isinstance(info, dict) and info.get("external_id")
+    }
     for item in items:
         data = item.model_dump(exclude={"source", "external_id"})
         if data.get("agent_id") and not await session.scalar(select(User.id).where(User.id == data["agent_id"], User.agency_id == principal.agency_id, User.active.is_(True))):
@@ -222,12 +230,7 @@ async def import_listings(body: ListingImport | ListingBatch, tasks: BackgroundT
         portals[portal] = portal_info
         data["portals"] = portals
 
-        existing = None
-        rows = (await session.execute(select(Listing).where(Listing.agency_id == principal.agency_id, Listing.deleted_at.is_(None)))).scalars().all()
-        if item.external_id:
-            existing = next((row for row in rows if (row.portals or {}).get(portal, {}).get("external_id") == item.external_id), None)
-        if existing is None and not item.external_id:
-            existing = next((row for row in rows if row.reference == item.reference), None)
+        existing = by_external.get((portal, item.external_id)) if item.external_id else by_reference.get(item.reference)
         created = existing is None
         if existing:
             data["reference"] = existing.reference
@@ -242,7 +245,7 @@ async def import_listings(body: ListingImport | ListingBatch, tasks: BackgroundT
             key = f"{portal}:{source_reference}"
             suffix = hashlib.sha256(key.encode()).hexdigest()[:24] if len(key) > 72 else source_reference
             data["reference"] = f"{portal[:3]}-{suffix}"[:80]
-            collision = next((row for row in rows if row.reference == data["reference"]), None)
+            collision = by_reference.get(data["reference"])
             if collision:
                 existing = collision
                 created = False
@@ -254,6 +257,9 @@ async def import_listings(body: ListingImport | ListingBatch, tasks: BackgroundT
                 existing = Listing(agency_id=principal.agency_id, **data)
                 session.add(existing)
         await session.flush()
+        by_reference[existing.reference] = existing
+        if item.external_id:
+            by_external[(portal, item.external_id)] = existing
         await emit(session, principal.agency_id, "listing.created" if created else "listing.updated", {"listing": serializers.listing(existing), "source": portal})
         results.append({"id": existing.id, "reference": existing.reference, "source": portal, "external_id": item.external_id, "created": created})
     await session.commit()
