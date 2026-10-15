@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from heapq import nlargest
 from typing import Any
 
 from sqlalchemy import select
@@ -60,18 +61,21 @@ def listing_fit(lead: Lead, listing: Listing) -> tuple[int, dict[str, Any]]:
 
 
 async def recommendations(session: AsyncSession, lead: Lead, *, limit: int = 10) -> list[dict[str, Any]]:
-    rows = (await session.execute(select(Listing).where(
-        Listing.agency_id == lead.agency_id,
-        Listing.status == "live",
-        Listing.deleted_at.is_(None),
-    ))).scalars().all()
+    cache = session.info.setdefault("live_listing_cache", {})
+    rows = cache.get(lead.agency_id)
+    if rows is None:
+        rows = (await session.execute(select(Listing).where(
+            Listing.agency_id == lead.agency_id,
+            Listing.status == "live",
+            Listing.deleted_at.is_(None),
+        ))).scalars().all()
+        cache[lead.agency_id] = rows
     matches = []
     for listing in rows:
         score, detail = listing_fit(lead, listing)
         if detail.get("eligible") and score >= 30:
             matches.append({"listing": listing, "score": score, "factors": detail["factors"]})
-    matches.sort(key=lambda m: (m["score"], m["listing"].updated_at), reverse=True)
-    return matches[:limit]
+    return nlargest(limit, matches, key=lambda m: (m["score"], m["listing"].updated_at))
 
 
 async def calculate(session: AsyncSession, lead: Lead) -> tuple[int, dict[str, Any]]:
